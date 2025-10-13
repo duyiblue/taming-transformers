@@ -1,0 +1,54 @@
+model:
+  base_learning_rate: 2.0e-6  # Lower learning rate for finetuning
+  target: taming.models.vqvae_simple.VQVAESimple
+  params:
+    embed_dim: 256
+    n_embed: 16384
+    ckpt_path: tmp/vqgan_imagenet.ckpt  # Path to pretrained checkpoint
+    ignore_keys: []  # Can add keys to ignore if needed
+
+    monitor: val/rec_loss
+    
+    ddconfig:
+      double_z: false
+      z_channels: 256
+      resolution: 256
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+      - 1
+      - 1
+      - 2
+      - 2
+      - 4
+      num_res_blocks: 2
+      attn_resolutions:
+      - 16
+      dropout: 0.0
+    
+    lossconfig:
+      target: taming.modules.losses.vqvae_simple.VQVAELoss
+      params:
+        codebook_weight: 1.0
+        pixelloss_weight: 1.0
+        perceptual_weight: 1.0  # Weight for LPIPS perceptual loss
+        use_perceptual: true     # Set to false for L1-only (faster)
+
+# Example data config (adjust for your dataset)
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 4
+    num_workers: 4
+    train:
+      target: taming.data.custom.CustomTrain
+      params:
+        training_images_list_file: data/train.txt
+        size: 256
+    validation:
+      target: taming.data.custom.CustomTest
+      params:
+        test_images_list_file: data/val.txt
+        size: 256
+

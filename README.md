@@ -408,3 +408,9 @@ Thanks to everyone who makes their code and models available. In particular,
       primaryClass={cs.CV}
 }
 ```
+
+# Forked for my use
+
+1. Wrote a simple test script (`test_vqgan.py`) that takes in a single image and does inference with a provided checkpoint. Experimented with two checkpoints: `VQGAN ImageNet (f=16)` and `VQGAN OpenImages (f=8), 16384` (from latent diffusion), finding that the later performs better.
+
+2. Because the discriminator (GAN) is used only in training (as a supplementary loss function), it is not required in inference. In the future, we also want to finetune the model without the GAN. Therefore, I implemented a `VQVAESimple` class, which is a simplified version of the VQ-GAN model (`VQModel`) without GAN loss.
