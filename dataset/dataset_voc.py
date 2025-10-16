@@ -92,7 +92,7 @@ def get_alignment_dataloader(
     train_dataset = VOCDataset(split="train", transform_target=transform_target, transform_source=transform_source, apply_mask=apply_mask)
     val_dataset = VOCDataset(split="val", transform_target=transform_target, transform_source=transform_source, apply_mask=apply_mask)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True, num_workers=4)
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, pin_memory=True, shuffle=True, num_workers=4)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, pin_memory=True, shuffle=False, num_workers=4)
 
     return train_dataloader, val_dataloader
 
