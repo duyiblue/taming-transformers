@@ -8,9 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset  # Hugging Face
 import matplotlib.pyplot as plt
 
-from dino_finetune.corruption import get_corruption_transforms
-from dino_finetune.model.dino_v2 import DINOV2EncoderLoRA
-from .utils import overlay_image_mask
+from .utils import overlay_image_mask, get_corruption_transforms
 
 class VOCDataset(Dataset):
     def __init__(
