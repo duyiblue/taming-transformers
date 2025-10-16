@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Tuple
 import numpy as np
 from PIL import Image
 import albumentations as A
@@ -79,13 +80,13 @@ def overlay_image_mask(img_rgb, mask_np, alpha=0.5):
     blended = Image.alpha_composite(img_rgba, color_mask)
     return blended.convert("RGB")
 
-def get_corruption_transforms(img_dim: tuple[int, int], severity: int):
+def get_corruption_transforms(img_dim: Tuple[int, int], severity: int):
     """Augmentation pipeline to recreate the ImageNet-C dataset to evaluate the robustness of
     the DINOv2 backbone. Not all augmentations are available in Albumentations, so only the
     available augmentations are included if reasonable.
 
         Args:
-            img_dim (tuple[int, int]): The height and width input tuple.
+            img_dim (Tuple[int, int]): The height and width input tuple.
             severity (int): A severity level ranging from 1 to 5.
 
         Returns:

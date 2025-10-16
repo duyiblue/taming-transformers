@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Tuple
 from pathlib import Path
 import numpy as np
 import pickle
@@ -98,21 +98,21 @@ class RobotDataset(Dataset):
         }
 
 def get_alignment_dataloader(
-    target_img_dim: tuple[int, int],
-    source_img_dim: tuple[int, int],
+    target_img_dim: Tuple[int, int],
+    source_img_dim: Tuple[int, int],
     batch_size: int=12
-) -> tuple[DataLoader, DataLoader]:
+) -> Tuple[DataLoader, DataLoader]:
     """
     Get the dataloaders for alignment training using robot data.
     Currently uses hardcoded robot data paths.
 
     Args:
-        target_img_dim (tuple[int, int]): The input size of the images for the target model.
-        source_img_dim (tuple[int, int]): The input size of the images for the source model.
+        target_img_dim (Tuple[int, int]): The input size of the images for the target model.
+        source_img_dim (Tuple[int, int]): The input size of the images for the source model.
         batch_size (int, optional): The batch size of the dataloader. Defaults to 12.
 
     Returns:
-        tuple[DataLoader, DataLoader]: The train and validation loader respectively.
+        Tuple[DataLoader, DataLoader]: The train and validation loader respectively.
     """
     # Hardcoded robot data paths
     target_path = "/orion/u/duyi/cross-emb/dinov2-finetune/data/home/yufeiding/projects/RoboVerseCrossEmb/retarget_data/franka_to_sawyer/CloseBox/images/franka"
