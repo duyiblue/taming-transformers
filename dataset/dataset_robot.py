@@ -107,7 +107,8 @@ def get_alignment_dataloader(
     Currently uses hardcoded robot data paths.
 
     Args:
-        img_dim (tuple[int, int]): The input size of the images.
+        target_img_dim (tuple[int, int]): The input size of the images for the target model.
+        source_img_dim (tuple[int, int]): The input size of the images for the source model.
         batch_size (int, optional): The batch size of the dataloader. Defaults to 12.
 
     Returns:

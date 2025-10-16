@@ -23,7 +23,8 @@ def get_alignment_dataloader(
     
     Args:
         dataset (str): Dataset type, either "voc" or "robot"
-        img_dim (Tuple[int, int]): The input size of the images (height, width)
+        target_img_dim (Tuple[int, int]): The input size of the images for the target model (height, width)
+        source_img_dim (Tuple[int, int]): The input size of the images for the source model (height, width)
         batch_size (int, optional): The batch size of the dataloader. Defaults to 12.
         apply_mask (bool, optional): Whether to apply mask overlay. Defaults to True. (Note: this is ignored for robot data)
         corruption_severity (int, optional): Severity of corruption transforms. Defaults to 0. (Note: this is ignored for robot data)
