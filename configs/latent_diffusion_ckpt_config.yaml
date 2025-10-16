@@ -1,3 +1,6 @@
+# This config is newly created by Yi, for alignment training.
+# It loads the latent diffusion ckpt.
+
 model:
   base_learning_rate: 4.5e-06
   target: taming.models.vqgan.VQModel

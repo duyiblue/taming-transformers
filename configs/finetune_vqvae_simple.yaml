@@ -1,3 +1,6 @@
+# This config is newly created by Yi, for alignment training.
+# It finetunes the VQGAN (ImageNet) checkpoint.
+
 model:
   base_learning_rate: 2.0e-6  # Lower learning rate for finetuning
   target: taming.models.vqvae_simple.VQVAESimple

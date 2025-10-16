@@ -100,7 +100,13 @@ def get_alignment_dataloader(
 # Below is a test for debugging. Not used in real deployment.
 # To run the test, run `python -m dataset.dataset_voc` in the codebase's root.
 if __name__ == "__main__":
-    train_dataloader, val_dataloader = get_alignment_dataloader(target_img_dim=(224, 224), source_img_dim=(224, 224), batch_size=12, apply_mask=False, corruption_severity=3)
+    train_dataloader, val_dataloader = get_alignment_dataloader(
+        target_img_dim=(224, 224),
+        source_img_dim=(224, 224),
+        batch_size=12,
+        apply_mask=True,
+        corruption_severity=0,
+    )
     
     batch = next(iter(train_dataloader))
     

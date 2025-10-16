@@ -143,7 +143,11 @@ def get_alignment_dataloader(
     return train_dataloader, val_dataloader
 
 if __name__ == "__main__":
-    train_dataloader, val_dataloader = get_alignment_dataloader(target_img_dim=(256, 256), source_img_dim=(224, 224), batch_size=12)
+    train_dataloader, val_dataloader = get_alignment_dataloader(
+        target_img_dim=(256, 256),
+        source_img_dim=(224, 224),
+        batch_size=12,
+    )
     
     batch = next(iter(train_dataloader))
     
