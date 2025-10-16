@@ -27,13 +27,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from typing import Optional, Tuple, Dict, Any
 from datetime import datetime
+from torchmetrics.image import StructuralSimilarityIndexMeasure
 
 # Add taming to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from taming.models.vqvae_simple import VQVAESimple
 from dataset.dataset_factory import get_alignment_dataloader
-
+from taming.modules.losses.lpips import LPIPS
 
 class AlignmentTrainer(pl.LightningModule):
     """
@@ -95,13 +96,11 @@ class AlignmentTrainer(pl.LightningModule):
         self.source_model.quant_conv.requires_grad_(True)
         print("✓ Source model loaded (encoder trainable, decoder frozen)")
         
-        # Optional: Initialize perceptual loss
-        if self.use_perceptual_loss:
-            from taming.modules.losses.lpips import LPIPS
-            self.perceptual_loss = LPIPS().eval()
-            self.perceptual_loss.requires_grad_(False)
-            print("✓ Perceptual loss (LPIPS) initialized")
-    
+        # Initialize reconstruction metrics (always for validation logging)
+        self.lpips_metric = LPIPS().eval()
+        self.lpips_metric.requires_grad_(False)
+        self.ssim_metric = StructuralSimilarityIndexMeasure(data_range=2.0)  # Images in [-1, 1]
+        
     def forward(self, batch):
         """
         Forward pass through both models.
@@ -162,18 +161,32 @@ class AlignmentTrainer(pl.LightningModule):
             'total_loss': total_loss,
         }
         
-        # Optional: Perceptual loss on reconstructions
+        # Optional: Perceptual loss on reconstructions (for training)
         if self.use_perceptual_loss and source_image is not None:
             with torch.no_grad():
                 # Decode with target decoder for comparison
                 target_recon = self.target_model.decode(source_latent)
             
-            perceptual_loss = self.perceptual_loss(source_image, target_recon).mean()
+            perceptual_loss = self.lpips_metric(source_image, target_recon).mean()
             total_loss = total_loss + self.perceptual_loss_weight * perceptual_loss
             loss_dict['perceptual_loss'] = perceptual_loss
             loss_dict['total_loss'] = total_loss
         
         return loss_dict
+    
+    def _ssim_loss(self, pred, target):
+        """
+        Compute SSIM loss (1 - SSIM) so that lower is better.
+        
+        Args:
+            pred: Predicted image
+            target: Target image
+            
+        Returns:
+            SSIM loss (lower is better)
+        """
+        ssim_score = self.ssim_metric(pred, target)
+        return 1.0 - ssim_score
     
     def training_step(self, batch, batch_idx):
         # Forward pass
@@ -206,24 +219,37 @@ class AlignmentTrainer(pl.LightningModule):
             outputs['source_image'] if self.use_perceptual_loss else None
         )
         
+        # Compute reconstruction metrics (L1, L2, SSIM, LPIPS)
+        with torch.no_grad():
+            # Get quantized version for decoding
+            if self.match_before_quantization:
+                source_quant, _, _ = self.source_model.quantize(outputs['source_h'])
+            else:
+                source_quant = outputs['source_latent']
+            
+            # Decode source latent with target decoder
+            source_recon = self.target_model.decode(source_quant)
+            source_image = outputs['source_image']
+            
+            l1_loss = F.l1_loss(source_recon, source_image)
+            l2_loss = F.mse_loss(source_recon, source_image)
+            ssim_loss = self._ssim_loss(source_recon, source_image)
+            lpips_loss = self.lpips_metric(source_recon, source_image).mean()
+        
         # Logging
         self.log('val/loss', loss_dict['total_loss'], prog_bar=True, logger=True, sync_dist=True)
         self.log('val/latent_loss', loss_dict['latent_loss'], prog_bar=True, logger=True, sync_dist=True)
         
-        if 'perceptual_loss' in loss_dict:
-            self.log('val/perceptual_loss', loss_dict['perceptual_loss'], prog_bar=False, logger=True, sync_dist=True)
+        self.log('val/recon_l1', l1_loss, prog_bar=False, logger=True, sync_dist=True)
+        self.log('val/recon_l2', l2_loss, prog_bar=False, logger=True, sync_dist=True)
+        self.log('val/recon_ssim_loss', ssim_loss, prog_bar=False, logger=True, sync_dist=True)
+        self.log('val/recon_lpips', lpips_loss, prog_bar=False, logger=True, sync_dist=True)
         
         # Visualization: Decode source latent with target decoder
         if batch_idx == 0:  # Only visualize first batch
             with torch.no_grad():
-                # Get quantized version for decoding
-                if self.match_before_quantization:
-                    source_quant, _, _ = self.source_model.quantize(outputs['source_h'])
-                else:
-                    source_quant = outputs['source_latent']
-                
-                # Decode with target decoder
-                source_via_target = self.target_model.decode(source_quant)
+                # Reuse the reconstruction already computed
+                source_via_target = source_recon
                 
                 # Also decode target for comparison
                 target_h = self.target_model.encoder(outputs['target_image'])
