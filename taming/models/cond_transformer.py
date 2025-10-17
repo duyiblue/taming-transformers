@@ -46,7 +46,7 @@ class Net2NetTransformer(pl.LightningModule):
         self.pkeep = pkeep
 
     def init_from_ckpt(self, path, ignore_keys=list()):
-        sd = torch.load(path, map_location="cpu")["state_dict"]
+        sd = torch.load(path, map_location="cpu", weights_only=False)["state_dict"]
         for k in sd.keys():
             for ik in ignore_keys:
                 if k.startswith(ik):

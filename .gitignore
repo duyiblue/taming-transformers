@@ -6,3 +6,5 @@ tmp/
 logs/
 .cursorignore
 outputs/
+requirements.txt
+INSTALLATION.md

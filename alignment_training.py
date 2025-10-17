@@ -515,6 +515,8 @@ def main():
         def on_validation_epoch_end(self, trainer, pl_module):
             # Get first batch results
             val_loader = trainer.val_dataloaders
+            if isinstance(val_loader, list):  # This varies across lightning versions
+                val_loader = val_loader[0]
             batch = next(iter(val_loader))
             
             # Move to device
