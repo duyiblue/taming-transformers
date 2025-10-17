@@ -47,8 +47,10 @@ class AlignmentTrainer(pl.LightningModule):
         target_config_path: str,
         learning_rate: float = 1e-4,
         latent_loss_weight: float = 1.0,
-        use_perceptual_loss: bool = False,
-        perceptual_loss_weight: float = 0.1,
+        recon_l1_loss_weight: float = 0.85,
+        recon_l2_loss_weight: float = 0.0,
+        recon_ssim_loss_weight: float = 0.15,
+        recon_lpips_loss_weight: float = 0.0,
         match_before_quantization: bool = True,
         visualize_first_n_samples: int = 4,
     ):
@@ -58,8 +60,10 @@ class AlignmentTrainer(pl.LightningModule):
             target_config_path: Path to target model config
             learning_rate: Learning rate for source encoder
             latent_loss_weight: Weight for latent matching loss
-            use_perceptual_loss: Whether to use perceptual loss on reconstructions
-            perceptual_loss_weight: Weight for perceptual loss (if enabled)
+            recon_l1_loss_weight: Weight for L1 reconstruction loss
+            recon_l2_loss_weight: Weight for L2 reconstruction loss
+            recon_ssim_loss_weight: Weight for SSIM reconstruction loss
+            recon_lpips_loss_weight: Weight for LPIPS reconstruction loss
             match_before_quantization: If True, match continuous latents before quantization
             visualize_first_n_samples: Number of samples to visualize in validation
         """
@@ -67,9 +71,17 @@ class AlignmentTrainer(pl.LightningModule):
         self.save_hyperparameters()
         
         self.learning_rate = learning_rate
+        
         self.latent_loss_weight = latent_loss_weight
-        self.use_perceptual_loss = use_perceptual_loss
-        self.perceptual_loss_weight = perceptual_loss_weight
+        self.recon_l1_loss_weight = recon_l1_loss_weight
+        self.recon_l2_loss_weight = recon_l2_loss_weight
+        self.recon_ssim_loss_weight = recon_ssim_loss_weight
+        self.recon_lpips_loss_weight = recon_lpips_loss_weight
+        if self.recon_l1_loss_weight > 0.0 or self.recon_l2_loss_weight > 0.0 or self.recon_ssim_loss_weight > 0.0 or self.recon_lpips_loss_weight > 0.0:
+            self.use_reconstruction_loss = True
+        else:
+            self.use_reconstruction_loss = False
+        
         self.match_before_quantization = match_before_quantization
         self.visualize_first_n_samples = visualize_first_n_samples
         
@@ -143,13 +155,22 @@ class AlignmentTrainer(pl.LightningModule):
             'source_latent': source_latent,
             'target_latent': target_latent,
             'source_h': source_h,  # Before quantization
-            'source_image': source_image,  # Store for loss computation
+            'source_image': source_image,  # Needed for visualization
             'target_image': target_image,
         }
     
-    def compute_loss(self, source_latent, target_latent, source_image=None):
+    def compute_loss(self, source_latent, target_latent, source_h, target_image=None):
         """
         Compute alignment loss between source and target latents.
+        
+        Args:
+            source_latent: Source encoder latent representation
+            target_latent: Target encoder latent representation  
+            source_h: Source continuous latent (before quantization)
+            target_image: Target domain image (for reconstruction loss)
+            
+        Returns:
+            Dictionary with loss components and reconstructed image
         """
         # Main latent matching loss (L2 distance)
         latent_loss = F.mse_loss(source_latent, target_latent)
@@ -160,17 +181,32 @@ class AlignmentTrainer(pl.LightningModule):
             'latent_loss': latent_loss,
             'total_loss': total_loss,
         }
-        
-        # Optional: Perceptual loss on reconstructions (for training)
-        if self.use_perceptual_loss and source_image is not None:
-            with torch.no_grad():
-                # Decode with target decoder for comparison
-                target_recon = self.target_model.decode(source_latent)
+
+        if target_image is not None:
+            # Compute reconstruction (with gradients for training, without for validation)
+            if self.match_before_quantization:
+                source_quant, _, _ = self.source_model.quantize(source_h)
+            else:
+                source_quant = source_latent
             
-            perceptual_loss = self.lpips_metric(source_image, target_recon).mean()
-            total_loss = total_loss + self.perceptual_loss_weight * perceptual_loss
-            loss_dict['perceptual_loss'] = perceptual_loss
+            recon_image = self.target_model.decode(source_quant)
+
+            l1_loss = F.l1_loss(recon_image, target_image)
+            l2_loss = F.mse_loss(recon_image, target_image)
+            ssim_loss = self._ssim_loss(recon_image, target_image)
+            lpips_loss = self.lpips_metric(recon_image, target_image).mean()
+
+            total_loss = total_loss + self.recon_l1_loss_weight * l1_loss \
+                + self.recon_l2_loss_weight * l2_loss \
+                + self.recon_ssim_loss_weight * ssim_loss \
+                + self.recon_lpips_loss_weight * lpips_loss
+            loss_dict['recon_l1_loss'] = l1_loss
+            loss_dict['recon_l2_loss'] = l2_loss
+            loss_dict['recon_ssim_loss'] = ssim_loss
+            loss_dict['recon_lpips_loss'] = lpips_loss
             loss_dict['total_loss'] = total_loss
+
+            loss_dict['recon_image'] = recon_image.detach()  # Store for visualization (detach to save memory)
         
         return loss_dict
     
@@ -196,15 +232,15 @@ class AlignmentTrainer(pl.LightningModule):
         loss_dict = self.compute_loss(
             outputs['source_latent'],
             outputs['target_latent'],
-            outputs['source_image'] if self.use_perceptual_loss else None
+            outputs['source_h'],
+            outputs['target_image'] if self.use_reconstruction_loss else None
         )
         
         # Logging
         self.log('train/loss', loss_dict['total_loss'], prog_bar=True, logger=True)
-        self.log('train/latent_loss', loss_dict['latent_loss'], prog_bar=True, logger=True)
-        
-        if 'perceptual_loss' in loss_dict:
-            self.log('train/perceptual_loss', loss_dict['perceptual_loss'], prog_bar=False, logger=True)
+        for key, value in loss_dict.items():
+            if key != 'total_loss' and key != 'recon_image':  # Skip non-scalar values
+                self.log(f'train/{key}', value, prog_bar=False, logger=True)
         
         return loss_dict['total_loss']
     
@@ -216,40 +252,21 @@ class AlignmentTrainer(pl.LightningModule):
         loss_dict = self.compute_loss(
             outputs['source_latent'],
             outputs['target_latent'],
-            outputs['source_image'] if self.use_perceptual_loss else None
+            outputs['source_h'],
+            outputs['target_image']  # Always compute reconstruction loss in validation
         )
-        
-        # Compute reconstruction metrics (L1, L2, SSIM, LPIPS)
-        with torch.no_grad():
-            # Get quantized version for decoding
-            if self.match_before_quantization:
-                source_quant, _, _ = self.source_model.quantize(outputs['source_h'])
-            else:
-                source_quant = outputs['source_latent']
-            
-            # Decode source latent with target decoder
-            source_recon = self.target_model.decode(source_quant)
-            source_image = outputs['source_image']
-            
-            l1_loss = F.l1_loss(source_recon, source_image)
-            l2_loss = F.mse_loss(source_recon, source_image)
-            ssim_loss = self._ssim_loss(source_recon, source_image)
-            lpips_loss = self.lpips_metric(source_recon, source_image).mean()
-        
+
         # Logging
         self.log('val/loss', loss_dict['total_loss'], prog_bar=True, logger=True, sync_dist=True)
-        self.log('val/latent_loss', loss_dict['latent_loss'], prog_bar=True, logger=True, sync_dist=True)
-        
-        self.log('val/recon_l1', l1_loss, prog_bar=False, logger=True, sync_dist=True)
-        self.log('val/recon_l2', l2_loss, prog_bar=False, logger=True, sync_dist=True)
-        self.log('val/recon_ssim_loss', ssim_loss, prog_bar=False, logger=True, sync_dist=True)
-        self.log('val/recon_lpips', lpips_loss, prog_bar=False, logger=True, sync_dist=True)
+        for key, value in loss_dict.items():
+            if key != 'total_loss' and key != 'recon_image':  # Skip non-scalar values
+                self.log(f'val/{key}', value, prog_bar=False, logger=True, sync_dist=True)
         
         # Visualization: Decode source latent with target decoder
         if batch_idx == 0:  # Only visualize first batch
             with torch.no_grad():
                 # Reuse the reconstruction already computed
-                source_via_target = source_recon
+                source_via_target = loss_dict['recon_image']
                 
                 # Also decode target for comparison
                 target_h = self.target_model.encoder(outputs['target_image'])
@@ -359,10 +376,14 @@ def parse_arguments():
     # Loss weights
     parser.add_argument('--latent_loss_weight', type=float, default=1.0,
                         help='Weight for latent matching loss')
-    parser.add_argument('--use_perceptual_loss', action='store_true',
-                        help='Use perceptual loss on reconstructions')
-    parser.add_argument('--perceptual_loss_weight', type=float, default=0.1,
-                        help='Weight for perceptual loss')
+    parser.add_argument('--recon_l1_loss_weight', type=float, default=0.85,
+                        help='Weight for reconstruction L1 loss')
+    parser.add_argument('--recon_l2_loss_weight', type=float, default=0.0,
+                        help='Weight for reconstruction L2 loss')
+    parser.add_argument('--recon_ssim_loss_weight', type=float, default=0.15,
+                        help='Weight for reconstruction SSIM loss')
+    parser.add_argument('--recon_lpips_loss_weight', type=float, default=0.0,
+                        help='Weight for reconstruction LPIPS loss')
     parser.add_argument('--match_before_quantization', action='store_true', default=True,
                         help='Match continuous latents before quantization (default: True)')
     
@@ -413,8 +434,10 @@ def save_experiment_config(args, output_dir):
             'max_epochs': args.max_epochs,
             'learning_rate': args.learning_rate,
             'latent_loss_weight': args.latent_loss_weight,
-            'use_perceptual_loss': args.use_perceptual_loss,
-            'perceptual_loss_weight': args.perceptual_loss_weight,
+            'recon_l1_loss_weight': args.recon_l1_loss_weight,
+            'recon_l2_loss_weight': args.recon_l2_loss_weight,
+            'recon_ssim_loss_weight': args.recon_ssim_loss_weight,
+            'recon_lpips_loss_weight': args.recon_lpips_loss_weight,
             'match_before_quantization': args.match_before_quantization,
             'visualize_first_n_samples': args.visualize_first_n_samples,
             'wandb_entity': args.wandb_entity,
@@ -464,8 +487,10 @@ def main():
         target_config_path=args.target_config,
         learning_rate=args.learning_rate,
         latent_loss_weight=args.latent_loss_weight,
-        use_perceptual_loss=args.use_perceptual_loss,
-        perceptual_loss_weight=args.perceptual_loss_weight,
+        recon_l1_loss_weight=args.recon_l1_loss_weight,
+        recon_l2_loss_weight=args.recon_l2_loss_weight,
+        recon_ssim_loss_weight=args.recon_ssim_loss_weight,
+        recon_lpips_loss_weight=args.recon_lpips_loss_weight,
         match_before_quantization=args.match_before_quantization,
         visualize_first_n_samples=args.visualize_first_n_samples,
     )
@@ -531,8 +556,10 @@ def main():
         'batch_size': args.batch_size,
         'learning_rate': args.learning_rate,
         'latent_loss_weight': args.latent_loss_weight,
-        'use_perceptual_loss': args.use_perceptual_loss,
-        'perceptual_loss_weight': args.perceptual_loss_weight,
+        'recon_l1_loss_weight': args.recon_l1_loss_weight,
+        'recon_l2_loss_weight': args.recon_l2_loss_weight,
+        'recon_ssim_loss_weight': args.recon_ssim_loss_weight,
+        'recon_lpips_loss_weight': args.recon_lpips_loss_weight,
         'match_before_quantization': args.match_before_quantization,
         'target_resolution': args.target_resolution,
         'source_resolution': args.source_resolution,
